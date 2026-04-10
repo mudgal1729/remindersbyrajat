@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+  --color-cream: #FFF8E7;
+  --color-navy: #1a1a2e;
+  --color-pink: #E91E8C;
+  --font-display: var(--font-space-grotesk), sans-serif;
+  --font-body: var(--font-dm-sans), sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: #FFF8E7;
+  color: #1a1a2e;
+  font-family: var(--font-dm-sans), sans-serif;
+}
+
+/* Underline-only inputs */
+.input-underline {
+  border: none;
+  border-bottom: 2px solid #1a1a2e;
+  background: transparent;
+  padding: 8px 0;
+  width: 100%;
+  font-size: 16px;
+  color: #1a1a2e;
+  outline: none;
+  font-family: var(--font-dm-sans), sans-serif;
+  transition: border-color 0.15s;
+}
+
+.input-underline::placeholder {
+  color: #999;
+}
+
+.input-underline:focus {
+  border-bottom-color: #E91E8C;
+}
+
+/* Date / time native inputs */
+input[type="date"],
+input[type="time"] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #FFF8E7;
+}
+::-webkit-scrollbar-thumb {
+  background: #1a1a2e;
+}
