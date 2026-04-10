@@ -2,13 +2,59 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { type Event } from '@/lib/types'
-import { formatCardDate } from '@/lib/eventUtils'
+import { formatCardDate, getCountdownBadge, type CountdownVariant } from '@/lib/eventUtils'
 import { DotsIcon } from '@/components/icons'
 
 type Props = {
   event: Event
   onEdit: (event: Event) => void
   onDelete: (id: string) => void
+}
+
+function CountdownBadge({
+  label,
+  variant,
+}: {
+  label: string
+  variant: CountdownVariant
+}) {
+  const base =
+    'inline-flex items-center px-2.5 py-1 text-[11px] font-bold uppercase tracking-widest'
+
+  if (variant === 'today') {
+    return (
+      <span className={`${base} bg-[#E91E8C] text-white border-[2px] border-[#1a1a2e] shadow-[2px_2px_0px_#1a1a2e]`}>
+        {label}
+      </span>
+    )
+  }
+  if (variant === 'tomorrow') {
+    return (
+      <span className={`${base} bg-[#E91E8C] text-white border-[2px] border-[#1a1a2e]`}>
+        {label}
+      </span>
+    )
+  }
+  if (variant === 'days') {
+    return (
+      <span className={`${base} bg-[#1a1a2e] text-white`}>
+        {label}
+      </span>
+    )
+  }
+  if (variant === 'months-near') {
+    return (
+      <span className={`${base} bg-white text-[#1a1a2e] border-[2px] border-[#1a1a2e]`}>
+        {label}
+      </span>
+    )
+  }
+  // months-far
+  return (
+    <span className={`${base} bg-white text-[#999] border-[2px] border-[#ccc]`}>
+      {label}
+    </span>
+  )
 }
 
 export default function EventCard({ event, onEdit, onDelete }: Props) {
@@ -25,6 +71,8 @@ export default function EventCard({ event, onEdit, onDelete }: Props) {
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [menuOpen])
+
+  const badge = getCountdownBadge(event)
 
   return (
     <div className="bg-white border-[3px] border-[#1a1a2e] shadow-[4px_4px_0px_#1a1a2e] p-5 flex flex-col gap-2 relative">
@@ -73,6 +121,9 @@ export default function EventCard({ event, onEdit, onDelete }: Props) {
 
       {/* Date / milestone */}
       <p className="text-[#666] text-sm font-medium">{formatCardDate(event)}</p>
+
+      {/* Countdown badge */}
+      {badge && <CountdownBadge label={badge.label} variant={badge.variant} />}
     </div>
   )
 }

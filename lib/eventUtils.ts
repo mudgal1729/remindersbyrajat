@@ -88,3 +88,27 @@ export function sortByNextOccurrence(events: Event[]): Event[] {
     (a, b) => getNextOccurrence(a).getTime() - getNextOccurrence(b).getTime()
   )
 }
+
+export type CountdownVariant = 'today' | 'tomorrow' | 'days' | 'months-near' | 'months-far'
+
+/** Returns a countdown label + display variant for an event card badge. */
+export function getCountdownBadge(
+  event: Event
+): { label: string; variant: CountdownVariant } | null {
+  const next = getNextOccurrence(event)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  next.setHours(0, 0, 0, 0)
+
+  const days = Math.round((next.getTime() - today.getTime()) / (24 * 60 * 60 * 1000))
+
+  if (days < 0) return null // past one-time event
+  if (days === 0) return { label: 'TODAY!', variant: 'today' }
+  if (days === 1) return { label: 'TOMORROW', variant: 'tomorrow' }
+  if (days <= 30) return { label: `IN ${days} DAYS`, variant: 'days' }
+
+  const months = Math.max(1, Math.round(days / 30))
+  const suffix = months === 1 ? 'MONTH' : 'MONTHS'
+  if (days <= 90) return { label: `IN ${months} ${suffix}`, variant: 'months-near' }
+  return { label: `IN ${months} ${suffix}`, variant: 'months-far' }
+}

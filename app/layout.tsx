@@ -16,9 +16,26 @@ const dmSans = DM_Sans({
   display: 'swap',
 })
 
+const APP_URL = 'https://remindersbyrajat.xyz'
+const DESCRIPTION =
+  'Never miss what matters. Get email reminders for birthdays, anniversaries, and life events.'
+
 export const metadata: Metadata = {
   title: 'Reminders by Rajat',
-  description: 'Never miss what matters',
+  description: DESCRIPTION,
+  metadataBase: new URL(APP_URL),
+  openGraph: {
+    title: 'Reminders by Rajat',
+    description: DESCRIPTION,
+    url: APP_URL,
+    siteName: 'Reminders by Rajat',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Reminders by Rajat',
+    description: DESCRIPTION,
+  },
 }
 
 export default function RootLayout({
