@@ -20,6 +20,8 @@ export default function HomePage() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [infoMessage, setInfoMessage] = useState('')
+  const [successMessage, setSuccessMessage] = useState('')
   const [checkingAuth, setCheckingAuth] = useState(true)
 
   const router = useRouter()
@@ -40,10 +42,16 @@ export default function HomePage() {
     )
   }
 
+  const clearMessages = () => {
+    setError('')
+    setInfoMessage('')
+    setSuccessMessage('')
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
-    setError('')
+    clearMessages()
 
     if (isSignUp) {
       const { error: err } = await supabase.auth.signUp({
@@ -56,13 +64,29 @@ export default function HomePage() {
         setLoading(false)
         return
       }
-    } else {
-      const { error: err } = await supabase.auth.signInWithPassword({ email, password })
-      if (err) {
+      // Don't redirect — user must confirm email first
+      setSuccessMessage(
+        "Check your email! We've sent you a confirmation link to verify your account."
+      )
+      setLoading(false)
+      return
+    }
+
+    // Sign in
+    const { error: err } = await supabase.auth.signInWithPassword({ email, password })
+    if (err) {
+      const isUnconfirmed =
+        err.message.toLowerCase().includes('email not confirmed') ||
+        err.code === 'email_not_confirmed'
+      if (isUnconfirmed) {
+        setInfoMessage(
+          'Please confirm your email first. Check your inbox for the verification link.'
+        )
+      } else {
         setError(err.message)
-        setLoading(false)
-        return
       }
+      setLoading(false)
+      return
     }
 
     router.refresh()
@@ -71,7 +95,7 @@ export default function HomePage() {
 
   const toggleMode = () => {
     setIsSignUp((v) => !v)
-    setError('')
+    clearMessages()
     setName('')
     setEmail('')
     setPassword('')
@@ -101,6 +125,24 @@ export default function HomePage() {
         >
           {isSignUp ? 'Create Account' : 'Sign In'}
         </h2>
+
+        {/* Success message (sign-up confirmation) */}
+        {successMessage && (
+          <div className="mb-6 border-[2px] border-[#0D9488] bg-[#F0FDFA] p-4">
+            <p className="text-[#0D9488] text-sm font-medium leading-snug">
+              {successMessage}
+            </p>
+          </div>
+        )}
+
+        {/* Info message (unconfirmed email on sign-in) */}
+        {infoMessage && (
+          <div className="mb-6 border-[2px] border-[#0891B2] bg-[#F0F9FF] p-4">
+            <p className="text-[#0891B2] text-sm font-medium leading-snug">
+              {infoMessage}
+            </p>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-6">
           {isSignUp && (

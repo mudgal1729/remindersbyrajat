@@ -3,8 +3,9 @@ import { Resend } from 'resend'
 import { type NextRequest, NextResponse } from 'next/server'
 
 const IST = 'Asia/Kolkata'
+const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000 // 5h30m in ms
 
-// ─── Date helpers (all operate on YYYY-MM-DD strings in IST) ─────────────────
+// ─── Date helpers ─────────────────────────────────────────────────────────────
 
 /** Returns "YYYY-MM-DD" for a Date in IST. */
 function toISTDateStr(d: Date): string {
@@ -14,12 +15,21 @@ function toISTDateStr(d: Date): string {
 /** Adds `days` to a YYYY-MM-DD string, returns YYYY-MM-DD. */
 function addDays(dateStr: string, days: number): string {
   const [y, m, d] = dateStr.split('-').map(Number)
-  const result = new Date(y, m - 1, d + days) // JS handles month overflow
+  const result = new Date(y, m - 1, d + days)
   return [
     result.getFullYear(),
     String(result.getMonth() + 1).padStart(2, '0'),
     String(result.getDate()).padStart(2, '0'),
   ].join('-')
+}
+
+/** Number of calendar days from dateA to dateB (both YYYY-MM-DD, dateB >= dateA). */
+function daysBetween(dateA: string, dateB: string): number {
+  const [ya, ma, da] = dateA.split('-').map(Number)
+  const [yb, mb, db] = dateB.split('-').map(Number)
+  return Math.round(
+    (Date.UTC(yb, mb - 1, db) - Date.UTC(ya, ma - 1, da)) / (24 * 60 * 60 * 1000)
+  )
 }
 
 /** Next calendar occurrence of an event in IST (YYYY-MM-DD). */
@@ -37,11 +47,69 @@ function nextOccurrenceIST(
   return `${Number(thisYear) + 1}-${mm}-${dd}`
 }
 
-/** This calendar year's occurrence (regardless of whether it's past). */
+/** This calendar year's occurrence of a recurring event in IST. */
 function thisYearOccurrenceIST(eventDateIST: string, todayIST: string): string {
   const mm = eventDateIST.slice(5, 7)
   const dd = eventDateIST.slice(8, 10)
   return `${todayIST.slice(0, 4)}-${mm}-${dd}`
+}
+
+/** Returns the hour/minute of a Date in IST (24h). */
+function getISTHourMinute(d: Date): { hour: number; minute: number } {
+  const str = d.toLocaleTimeString('en-GB', {
+    timeZone: IST,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+  const [hour, minute] = str.split(':').map(Number)
+  return { hour, minute }
+}
+
+/**
+ * Returns the IST date (YYYY-MM-DD) on which a reminder should be sent.
+ *
+ * With explicit time:
+ *   - week_before   → same time as event, 7 days earlier
+ *   - 3_hours_before → 3 hours before the event time
+ *
+ * Without explicit time (midnight IST = no time set):
+ *   - week_before   → midnight IST 8 days before (≈ "9 PM IST, 8 days before")
+ *   - 3_hours_before → midnight IST 1 day before (≈ "9 PM IST, day before")
+ */
+function getReminderDayIST(
+  event: EventRow,
+  reminderType: 'week_before' | '3_hours_before',
+  todayIST: string
+): string {
+  const eventDt = new Date(event.event_date)
+  const eventDateIST = toISTDateStr(eventDt)
+  const { hour, minute } = getISTHourMinute(eventDt)
+  const hasTime = hour !== 0 || minute !== 0
+
+  // For recurring events use the next upcoming occurrence date
+  const targetDateIST = event.is_recurring
+    ? nextOccurrenceIST(eventDateIST, true, todayIST)
+    : eventDateIST
+
+  if (!hasTime) {
+    // No explicit time — use midnight IST convention
+    return reminderType === 'week_before'
+      ? addDays(targetDateIST, -8) // 8 days before at midnight IST
+      : addDays(targetDateIST, -1) // day before at midnight IST
+  }
+
+  // Has explicit time — calculate exact reminder timestamp in IST then convert to date
+  const [y, m, d] = targetDateIST.split('-').map(Number)
+  // Build event UTC ms: treat (y, m, d, hour, minute) as IST and subtract offset
+  const eventUTCms = Date.UTC(y, m - 1, d, hour, minute) - IST_OFFSET_MS
+
+  const reminderUTCms =
+    reminderType === '3_hours_before'
+      ? eventUTCms - 3 * 60 * 60 * 1000
+      : eventUTCms - 7 * 24 * 60 * 60 * 1000 // 7 days earlier, same time
+
+  return toISTDateStr(new Date(reminderUTCms))
 }
 
 // ─── Email content helpers ────────────────────────────────────────────────────
@@ -80,18 +148,24 @@ function formatDateLong(dateStr: string): string {
 
 // ─── HTML email template ──────────────────────────────────────────────────────
 
+function timelineMessage(daysUntil: number): string {
+  const pink = 'color:#E91E8C;'
+  if (daysUntil <= 0) return `This event is <strong style="${pink}">today</strong>!`
+  if (daysUntil === 1) return `This event is <strong style="${pink}">tomorrow</strong>!`
+  return `This event is coming up in <strong style="${pink}">${daysUntil} days</strong>.`
+}
+
 function buildEmailHTML(opts: {
   recipientName: string
   eventTitle: string
   nextOccIST: string
   milestone: string
-  isToday: boolean
+  daysUntil: number
 }): string {
-  const { recipientName, eventTitle, nextOccIST, milestone, isToday } = opts
+  const { recipientName, eventTitle, nextOccIST, milestone, daysUntil } = opts
   const dateFormatted = formatDateLong(nextOccIST)
-  const timelineHtml = isToday
-    ? 'This event is <strong style="color:#E91E8C;">today</strong>!'
-    : 'This event is coming up in <strong style="color:#E91E8C;">7 days</strong>.'
+  const timelineHtml = timelineMessage(daysUntil)
+  const firstName = recipientName ? recipientName.split(' ')[0] : 'there'
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -124,49 +198,26 @@ function buildEmailHTML(opts: {
       <!-- Card -->
       <tr>
         <td style="background:#ffffff;border:3px solid #1a1a2e;padding:0;">
-
-          <!-- Pink top accent bar -->
           <div style="height:4px;background:#E91E8C;"></div>
-
           <div style="padding:32px;">
 
-            <!-- Tag -->
             <div style="display:inline-block;border:2px solid #1a1a2e;padding:4px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#1a1a2e;margin-bottom:24px;">
               EVENT REMINDER
             </div>
 
-            <!-- Greeting -->
-            <p style="margin:0 0 8px 0;font-size:15px;color:#1a1a2e;line-height:1.5;">
-              Hi ${recipientName ? recipientName.split(' ')[0] : 'there'},
-            </p>
+            <p style="margin:0 0 8px 0;font-size:15px;color:#1a1a2e;line-height:1.5;">Hi ${firstName},</p>
+            <p style="margin:0 0 28px 0;font-size:15px;color:#1a1a2e;line-height:1.6;">${timelineHtml}</p>
 
-            <!-- Timeline message -->
-            <p style="margin:0 0 28px 0;font-size:15px;color:#1a1a2e;line-height:1.6;">
-              ${timelineHtml}
-            </p>
-
-            <!-- Divider -->
             <div style="height:2px;background:#1a1a2e;margin-bottom:28px;"></div>
 
-            <!-- Event title -->
-            <div style="margin-bottom:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#999;">
-              EVENT
-            </div>
-            <div style="margin-bottom:${milestone ? '20px' : '20px'};font-size:22px;font-weight:700;text-transform:uppercase;color:#E91E8C;letter-spacing:0.5px;line-height:1.2;">
-              ${eventTitle}
-            </div>
+            <div style="margin-bottom:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#999;">EVENT</div>
+            <div style="margin-bottom:20px;font-size:22px;font-weight:700;text-transform:uppercase;color:#E91E8C;letter-spacing:0.5px;line-height:1.2;">${eventTitle}</div>
 
             ${milestone ? `
-            <!-- Milestone -->
-            <div style="margin-bottom:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#999;">
-              MILESTONE
-            </div>
-            <div style="margin-bottom:20px;font-size:17px;font-weight:700;color:#1a1a2e;">
-              ${milestone}
-            </div>
+            <div style="margin-bottom:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#999;">MILESTONE</div>
+            <div style="margin-bottom:20px;font-size:17px;font-weight:700;color:#1a1a2e;">${milestone}</div>
             ` : ''}
 
-            <!-- Date -->
             <div style="background:#FFF8E7;border:2px solid #1a1a2e;padding:14px 16px;">
               <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#999;margin-bottom:4px;">DATE</div>
               <div style="font-size:16px;font-weight:700;color:#1a1a2e;">${dateFormatted}</div>
@@ -176,7 +227,6 @@ function buildEmailHTML(opts: {
         </td>
       </tr>
 
-      <!-- Footer -->
       <tr>
         <td style="padding-top:24px;text-align:center;">
           <p style="margin:0;font-size:12px;color:#888;line-height:1.6;">
@@ -219,11 +269,8 @@ async function runReminders(): Promise<{ sent: number; reset: number }> {
   )
 
   const resend = new Resend(process.env.RESEND_API_KEY)
-
   const todayIST = toISTDateStr(new Date())
-  const sevenDaysIST = addDays(todayIST, 7)
 
-  // Fetch all events
   const { data: allEvents, error: eventsError } = await adminClient
     .from('events')
     .select('*')
@@ -238,8 +285,7 @@ async function runReminders(): Promise<{ sent: number; reset: number }> {
     if (!event.is_recurring) return false
     if (!event.reminder_sent_week && !event.reminder_sent_hours) return false
     const eventDateIST = toISTDateStr(new Date(event.event_date))
-    const thisYearOcc = thisYearOccurrenceIST(eventDateIST, todayIST)
-    return todayIST > thisYearOcc
+    return todayIST > thisYearOccurrenceIST(eventDateIST, todayIST)
   })
 
   for (const event of toReset) {
@@ -256,18 +302,16 @@ async function runReminders(): Promise<{ sent: number; reset: number }> {
   // ── Step 2: Find events needing a reminder today ──
   const needsReminder = events.filter((event) => {
     if (!event.reminder_type) return false
-    const eventDateIST = toISTDateStr(new Date(event.event_date))
-    const nextOcc = nextOccurrenceIST(eventDateIST, event.is_recurring, todayIST)
 
     const needsWeek =
       (event.reminder_type === 'week_before' || event.reminder_type === 'both') &&
       !event.reminder_sent_week &&
-      nextOcc === sevenDaysIST
+      getReminderDayIST(event, 'week_before', todayIST) === todayIST
 
     const needsHours =
       (event.reminder_type === '3_hours_before' || event.reminder_type === 'both') &&
       !event.reminder_sent_hours &&
-      nextOcc === todayIST
+      getReminderDayIST(event, '3_hours_before', todayIST) === todayIST
 
     return needsWeek || needsHours
   })
@@ -294,13 +338,24 @@ async function runReminders(): Promise<{ sent: number; reset: number }> {
 
     const eventDateIST = toISTDateStr(new Date(event.event_date))
     const nextOcc = nextOccurrenceIST(eventDateIST, event.is_recurring, todayIST)
-    const isToday = nextOcc === todayIST
+    const daysUntil = daysBetween(todayIST, nextOcc)
     const milestone = event.is_recurring
       ? milestoneText(event.title, eventDateIST, nextOcc)
       : ''
 
+    // Determine which reminder type is firing today
+    const firingWeek =
+      (event.reminder_type === 'week_before' || event.reminder_type === 'both') &&
+      !event.reminder_sent_week &&
+      getReminderDayIST(event, 'week_before', todayIST) === todayIST
+
+    const firingHours =
+      (event.reminder_type === '3_hours_before' || event.reminder_type === 'both') &&
+      !event.reminder_sent_hours &&
+      getReminderDayIST(event, '3_hours_before', todayIST) === todayIST
+
     const { error: emailError } = await resend.emails.send({
-      from: 'Reminders by Rajat <onboarding@resend.dev>',
+      from: 'Reminders by Rajat <reminders@remindersbyrajat.xyz>',
       to: [profile.email],
       subject: `Reminder: ${event.title} is coming up!`,
       html: buildEmailHTML({
@@ -308,7 +363,7 @@ async function runReminders(): Promise<{ sent: number; reset: number }> {
         eventTitle: event.title,
         nextOccIST: nextOcc,
         milestone,
-        isToday,
+        daysUntil,
       }),
     })
 
@@ -317,10 +372,9 @@ async function runReminders(): Promise<{ sent: number; reset: number }> {
       continue
     }
 
-    // Mark the appropriate flag as sent
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
-    if (isToday) updates.reminder_sent_hours = true
-    else updates.reminder_sent_week = true
+    if (firingHours) updates.reminder_sent_hours = true
+    if (firingWeek) updates.reminder_sent_week = true
 
     await adminClient.from('events').update(updates).eq('id', event.id)
     sent++
@@ -333,7 +387,6 @@ async function runReminders(): Promise<{ sent: number; reset: number }> {
 
 function isAuthorized(request: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET
-  // Vercel automatically adds this header for cron invocations
   const isVercelCron = request.headers.get('x-vercel-cron') === '1'
   const authHeader = request.headers.get('authorization')
   return isVercelCron || (!!cronSecret && authHeader === `Bearer ${cronSecret}`)
